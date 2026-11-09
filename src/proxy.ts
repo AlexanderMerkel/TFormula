@@ -35,6 +35,10 @@ import {
 import { TerminalWriter } from "./terminal-writer.js";
 import type { CliOptions, TerminalCapabilities } from "./types.js";
 
+/** Pause the child PTY above this mirrored backlog and resume below the low mark. */
+const OUTPUT_HIGH_WATER_CHARS = 128 * 1024;
+const OUTPUT_LOW_WATER_CHARS = 32 * 1024;
+
 function ensureNodePtyHelper(): void {
   if (process.platform !== "darwin") return;
   try {
@@ -145,6 +149,8 @@ export async function runProxy(
   const outputSplitter = new OutputCheckpointSplitter(Math.max(2, Math.floor(rows / 3)));
   outputSplitter.setCharacterInterval(cols * Math.max(2, Math.floor(rows / 3)));
   let plainOutputFastPath = false;
+  let queuedOutputChars = 0;
+  let childPaused = false;
 
   const enqueueScreenOperation = (operation: () => Promise<unknown> | void): void => {
     outputQueue = outputQueue.then(async () => { await operation(); }).catch((error) => {
@@ -512,6 +518,14 @@ export async function runProxy(
       writeOuter(data);
       return;
     }
+    // Mirrored output drains far slower than a fast producer writes. Pause
+    // the PTY instead of queueing without bound, so memory stays flat and
+    // Ctrl-C stops the output within a fraction of a second.
+    queuedOutputChars += data.length;
+    if (!childPaused && queuedOutputChars > OUTPUT_HIGH_WATER_CHARS) {
+      childPaused = true;
+      child.pause();
+    }
     // If the stable screen has no formula state and this burst cannot begin or
     // continue any supported formula syntax, intermediate scans cannot reveal
     // useful work. Keeping it as one xterm write avoids turning large ordinary
@@ -588,6 +602,11 @@ export async function runProxy(
           if (realCursorCatchupQueued) screen.cancelQueuedWrite();
           if (queued) screen.cancelQueuedWrite();
         }
+      }
+      queuedOutputChars -= data.length;
+      if (childPaused && queuedOutputChars <= OUTPUT_LOW_WATER_CHARS) {
+        childPaused = false;
+        child.resume();
       }
     });
   };
