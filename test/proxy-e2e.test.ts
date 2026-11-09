@@ -170,6 +170,49 @@ describe("runProxy pseudo-terminal integration", () => {
     expect(transcript).not.toContain("TFORMULA_UNEXPECTED_CHILD_INPUT");
   }, 6_000);
 
+  it("stays transparent when the terminal cannot show graphics", async () => {
+    const tsx = join(process.cwd(), "node_modules", ".bin", "tsx");
+    const fixture = join(process.cwd(), "test", "fixtures", "proxy-edge-agent.mjs");
+    const environment = {
+      ...process.env,
+      TERM: "xterm-256color",
+      TFORMULA_EDGE_MODE: "no-graphics"
+    } as Record<string, string>;
+    delete environment.TFORMULA_ACTIVE;
+    delete environment.TERM_PROGRAM;
+    let transcript = "";
+    let typed = false;
+    const terminal = pty.spawn(tsx, ["src/cli.ts", "--", process.execPath, fixture], {
+      name: "xterm-256color",
+      cols: 100,
+      rows: 32,
+      cwd: process.cwd(),
+      env: environment
+    });
+    const exited = new Promise<number>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        terminal.kill();
+        reject(new Error("no-graphics fixture timed out"));
+      }, 5_000);
+      terminal.onData((data) => {
+        transcript += data;
+        if (!typed && transcript.includes("TFORMULA_EDGE_READY:no-graphics")) {
+          typed = true;
+          // Ctrl-]: without a mirror there is no focus overlay to open.
+          terminal.write("\x1d");
+        }
+      });
+      terminal.onExit(({ exitCode }) => {
+        clearTimeout(timeout);
+        resolve(exitCode);
+      });
+    });
+
+    await expect(exited).resolves.toBe(0);
+    expect(transcript).toContain("TFORMULA_UNEXPECTED_CHILD_INPUT:1d");
+    expect(transcript).not.toContain(`${ESC}_G`);
+  }, 6_000);
+
   it("places after resize leaves an otherwise idle Agent in pending-wrap", async () => {
     const tsx = join(process.cwd(), "node_modules", ".bin", "tsx");
     const fixture = join(process.cwd(), "test", "fixtures", "proxy-edge-agent.mjs");
