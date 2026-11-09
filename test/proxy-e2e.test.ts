@@ -100,7 +100,7 @@ describe("runProxy pseudo-terminal integration", () => {
             `${ESC}[6;18;9t${ESC}[4;576;900t`
             + `${ESC}]10;rgb:dddd/eeee/ffff${ST}`
             + `${ESC}]11;rgb:1111/2222/3333${ST}`
-            + `${ESC}[?62;4;6;22c${ESC}_Gi=2000000000;OK${ST}`
+            + `${ESC}_Gi=2000000000;OK${ST}${ESC}[?62;4;6;22c`
           );
         }
       });
@@ -113,6 +113,55 @@ describe("runProxy pseudo-terminal integration", () => {
     await expect(exited).resolves.toBe(0);
     expect(transcript).toContain("TFORMULA_EDGE_END");
     expect(transcript).not.toContain("TFORMULA_UNEXPECTED_CHILD_INPUT");
+    expect(transcript).toContain("a=p");
+  }, 6_000);
+
+  it("ends startup quarantine at its DA barrier and forwards the Agent's own DA reply", async () => {
+    const tsx = join(process.cwd(), "node_modules", ".bin", "tsx");
+    const fixture = join(process.cwd(), "test", "fixtures", "proxy-edge-agent.mjs");
+    const environment = {
+      ...process.env,
+      TERM: "xterm-ghostty",
+      TERM_PROGRAM: "ghostty",
+      TFORMULA_EDGE_MODE: "late-startup",
+      TFORMULA_EDGE_READY_DELAY_MS: "300"
+    } as Record<string, string>;
+    delete environment.TFORMULA_ACTIVE;
+    let transcript = "";
+    let answered = false;
+    const terminal = pty.spawn(tsx, ["src/cli.ts", "--", process.execPath, fixture], {
+      name: "xterm-ghostty",
+      cols: 100,
+      rows: 32,
+      cwd: process.cwd(),
+      env: environment
+    });
+    const exited = new Promise<number>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        terminal.kill();
+        reject(new Error("startup DA barrier fixture timed out"));
+      }, 5_000);
+      terminal.onData((data) => {
+        transcript += data;
+        if (!answered && transcript.includes("TFORMULA_EDGE_READY:late-startup")) {
+          answered = true;
+          // TFormula's late startup replies, then the reply to a DA query the
+          // Agent sent itself, coalesced into one read.
+          terminal.write(
+            `${ESC}_Gi=2000000000;OK${ST}${ESC}[?62;4;6;22c${ESC}[?1;2c`
+          );
+        }
+      });
+      terminal.onExit(({ exitCode }) => {
+        clearTimeout(timeout);
+        resolve(exitCode);
+      });
+    });
+
+    await expect(exited).resolves.toBe(0);
+    const agentDa = Buffer.from(`${ESC}[?1;2c`).toString("hex");
+    expect(transcript).toContain(`TFORMULA_UNEXPECTED_CHILD_INPUT:${agentDa}`);
+    expect(transcript.match(/TFORMULA_UNEXPECTED_CHILD_INPUT/gu)).toHaveLength(1);
     expect(transcript).toContain("a=p");
   }, 6_000);
 
@@ -149,7 +198,7 @@ describe("runProxy pseudo-terminal integration", () => {
             `${ESC}[6;18;9t${ESC}[4;576;900t`
             + `${ESC}]10;rgb:dddd/eeee/ffff${ST}`
             + `${ESC}]11;rgb:1111/2222/3333${ST}`
-            + `${ESC}[?62;4;6;22c${ESC}_Gi=2000000000;OK${ST}`
+            + `${ESC}_Gi=2000000000;OK${ST}${ESC}[?62;4;6;22c`
           );
         }
         if (!resized && transcript.includes("TFORMULA_EDGE_READY:exit-during-probe")) {
@@ -211,7 +260,7 @@ describe("runProxy pseudo-terminal integration", () => {
             `${ESC}[6;18;9t${ESC}[4;576;900t`
             + `${ESC}]10;rgb:dddd/eeee/ffff${ST}`
             + `${ESC}]11;rgb:1111/2222/3333${ST}`
-            + `${ESC}_Gi=2000000000;OK${ST}`
+            + `${ESC}_Gi=2000000000;OK${ST}${ESC}[?62;4;6;22c`
           );
         }
         if (!narrowed && transcript.includes("TFORMULA_PENDING_PHASE_1")) {

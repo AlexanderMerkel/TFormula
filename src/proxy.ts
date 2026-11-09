@@ -70,6 +70,7 @@ export async function runProxy(
   let startupProbeQuarantine = startupProbePending;
   let startupProbeTimer: NodeJS.Timeout | undefined;
   let startupProbeCapture = "";
+  let startupKittyMessage: string | undefined;
   let startupProbeSawChildOutput = false;
   let responseTailTimer: NodeJS.Timeout | undefined;
   let latestLayoutEpoch = 0;
@@ -172,7 +173,7 @@ export async function runProxy(
     startRequestedProbe();
   };
 
-  const finishStartupProbeQuarantine = (kittyMessage?: string): void => {
+  const finishStartupProbeQuarantine = (): void => {
     if (!startupProbeQuarantine) return;
     const captured = startupProbeCapture;
     startupProbeCapture = "";
@@ -181,7 +182,7 @@ export async function runProxy(
     startupProbeTimer = undefined;
     const residual = probeResponseFilter.flush(true);
     if (residual && !exiting) child.write(residual);
-    if (!exiting && kittyMessage?.trim().toUpperCase() === "OK") {
+    if (!exiting && startupKittyMessage?.trim().toUpperCase() === "OK") {
       const parsed = parseTerminalResponses(captured);
       const validCell = parsed.cell
         && parsed.cell.width > 0 && parsed.cell.height > 0
@@ -415,7 +416,17 @@ export async function runProxy(
     }
     const filtered = probeResponseFilter.push(data, startupProbeQuarantine);
     if (startupProbeQuarantine && filtered.responses.length > 0) {
-      startupProbeCapture += filtered.responses.join("");
+      // Our DA query was sent last, so its reply ends the quarantine; any
+      // later reply, even in the same chunk, belongs to the Agent.
+      const barrier = filtered.responses.findIndex((response) =>
+        /^\x1b\[\?[0-9;]*c$/u.test(response));
+      const ours = barrier < 0 ? filtered.responses : filtered.responses.slice(0, barrier + 1);
+      startupProbeCapture += ours.join("");
+      if (barrier >= 0) {
+        finishStartupProbeQuarantine();
+        const agentReplies = filtered.responses.slice(barrier + 1).join("");
+        if (agentReplies) child.write(agentReplies);
+      }
     }
     if (probeActive && filtered.responses.length > 0) {
       probeCapture += filtered.responses.join("");
@@ -430,6 +441,11 @@ export async function runProxy(
     responseTailTimer = undefined;
     const data = Buffer.isBuffer(chunk) ? inputDecoder.write(chunk) : chunk;
     const filtered = responseFilter.push(data);
+    // The tagged Kitty reply precedes the DA barrier that ends quarantine,
+    // possibly in this same chunk, so record it before routing the rest.
+    for (const response of filtered.graphics) {
+      if (response.imageId === KITTY_QUERY_IMAGE_ID) startupKittyMessage = response.message;
+    }
     // Preserve stream order for the runtime barrier: every untagged cell/theme
     // response in this chunk must be recorded before its tagged Kitty ACK can
     // complete the generation.
@@ -438,7 +454,6 @@ export async function runProxy(
       if (response.imageId === KITTY_QUERY_IMAGE_ID) {
         // A delayed startup capability ACK belongs to TFormula, but is not a
         // terminal image acceptance and must never be forwarded to the Agent.
-        finishStartupProbeQuarantine(response.message);
         continue;
       }
       if (isRuntimeProbeQueryId(response.imageId)) {
