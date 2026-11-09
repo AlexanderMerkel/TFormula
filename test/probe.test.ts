@@ -110,10 +110,10 @@ describe("terminal probing", () => {
       `\x1b_Gi=${probeInternals.KITTY_QUERY_IMAGE_ID};OK\x1b\\`
     );
 
-    expect(probeInternals.startupProbeBarrierReceived(partial, false)).toBe(false);
-    expect(probeInternals.startupProbeBarrierReceived(deviceBarrier, false)).toBe(true);
-    expect(probeInternals.startupProbeBarrierReceived(deviceBarrier, true)).toBe(false);
-    expect(probeInternals.startupProbeBarrierReceived(kittyBarrier, true)).toBe(true);
+    expect(probeInternals.startupProbeBarrierReceived(partial)).toBe(false);
+    expect(probeInternals.startupProbeBarrierReceived(kittyBarrier)).toBe(false);
+    expect(probeInternals.startupProbeBarrierReceived(deviceBarrier)).toBe(true);
+    expect(probeInternals.KITTY_GRAPHICS_QUERY.endsWith("\x1b[c")).toBe(true);
   });
 
   it("assigns tagged runtime barriers outside formula image ids and wraps safely", () => {
