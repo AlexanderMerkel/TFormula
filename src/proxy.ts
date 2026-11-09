@@ -56,6 +56,11 @@ export async function runProxy(
   const cols = Math.max(2, process.stdout.columns ?? 80);
   const rows = Math.max(2, process.stdout.rows ?? 24);
   let capabilities = initialCapabilities;
+  // Graphics can only turn on later through the delayed startup Kitty ACK;
+  // runtime probes require them already. Without either, the xterm mirror
+  // can never place a formula, so keep the byte-transparent path instead.
+  const mirrorMath = options.renderMath
+    && (initialCapabilities.kittyGraphics || startupProbePending);
   let child: pty.IPty;
   let probeCapture = "";
   let probeTimer: NodeJS.Timeout | undefined;
@@ -80,7 +85,7 @@ export async function runProxy(
   const outputTransformer = new TerminalOutputTransformer();
   const cellHoldback = new TerminalCellHoldback();
   const ghosttyTerminal = isGhosttyTerminal();
-  const imageTransmitter = options.renderMath
+  const imageTransmitter = mirrorMath
     ? new KittyImageTransmitter(selectImageTransmissionMode())
     : undefined;
   const debugLogPath = options.debug && process.stderr.isTTY
@@ -99,7 +104,7 @@ export async function runProxy(
       }
     }
   };
-  const formulaHistory = options.renderMath && options.recordHistory
+  const formulaHistory = mirrorMath && options.recordHistory
     ? new FormulaHistoryStore({
         // Arguments can contain API tokens or private prompts. Keep only the
         // executable name in persistent history metadata.
@@ -111,7 +116,7 @@ export async function runProxy(
   const writeOuter = (data: string | Uint8Array): void => {
     terminalWriter.enqueue(data);
   };
-  const screen = options.renderMath
+  const screen = mirrorMath
     ? new FormulaScreen({
         cols,
         rows,
