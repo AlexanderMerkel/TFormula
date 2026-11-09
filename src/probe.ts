@@ -22,10 +22,10 @@ export const KITTY_QUERY_IMAGE_ID = 2_000_000_000;
 export const STARTUP_PROBE_QUARANTINE_MS = 1_000;
 /** Hard bound for a silent or unusually slow-starting wrapped child. */
 export const STARTUP_PROBE_MAX_WAIT_MS = 5_000;
-// Keep the tagged Kitty response last. It is the only startup response that
-// carries our generation id, so putting DA before it makes the Kitty ACK an
-// actual ordering barrier for every untagged CSI/OSC response.
-const KITTY_GRAPHICS_QUERY = `\x1b[c\x1b_Gi=${KITTY_QUERY_IMAGE_ID},s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\`;
+// Every terminal answers primary device attributes, and in order, so DA last
+// is the barrier for every earlier reply. A DA reply without a Kitty reply is
+// a definite negative instead of a wait for the full probe timeout.
+const KITTY_GRAPHICS_QUERY = `\x1b_Gi=${KITTY_QUERY_IMAGE_ID},s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c`;
 
 // Runtime cell probes use a distinct query id as an ordering barrier. Kitty
 // replies carry the id back verbatim, unlike CSI 16t/14t and OSC 10/11 replies,
@@ -291,10 +291,8 @@ export interface ProbeResult {
   startupProbePending: boolean;
 }
 
-function startupProbeBarrierReceived(parsed: ParsedResponses, requestedKitty: boolean): boolean {
-  return requestedKitty
-    ? parsed.kittyGraphics !== undefined
-    : parsed.primaryDeviceAttributes;
+function startupProbeBarrierReceived(parsed: ParsedResponses): boolean {
+  return parsed.primaryDeviceAttributes;
 }
 
 export async function probeTerminal(
@@ -327,7 +325,7 @@ export async function probeTerminal(
   const onData = (chunk: Buffer | string): void => {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
     const parsed = parseTerminalResponses(Buffer.concat(chunks).toString("utf8"));
-    if (startupProbeBarrierReceived(parsed, fallback.kittyGraphics)) finishProbe?.();
+    if (startupProbeBarrierReceived(parsed)) finishProbe?.();
   };
 
   process.stdin.setRawMode(true);
@@ -372,11 +370,10 @@ export async function probeTerminal(
       windowPixels: parsed.windowPixels
     },
     pendingInput: parsed.residual,
-    // A Kitty response is the ordered barrier after every untagged startup
-    // query.  If it did not arrive before the fixed probe window, runProxy
-    // briefly quarantines late CSI/OSC/DA replies instead of feeding them to
-    // the newly spawned Agent as keyboard input.
-    startupProbePending: fallback.kittyGraphics && parsed.kittyGraphics === undefined
+    // DA is the ordered barrier after every startup query. If it did not
+    // arrive before the fixed probe window, runProxy quarantines late replies
+    // until it does instead of feeding them to the Agent as keyboard input.
+    startupProbePending: fallback.kittyGraphics && !parsed.primaryDeviceAttributes
   };
 }
 
