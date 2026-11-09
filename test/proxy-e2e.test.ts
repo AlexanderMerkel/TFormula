@@ -64,6 +64,53 @@ afterEach(() => {
 });
 
 describe("runProxy pseudo-terminal integration", () => {
+  it("keeps --no-math byte-transparent", async () => {
+    const tsx = join(process.cwd(), "node_modules", ".bin", "tsx");
+    const fixture = join(process.cwd(), "test", "fixtures", "proxy-edge-agent.mjs");
+    const environment = {
+      ...process.env,
+      TERM: "xterm-ghostty",
+      TERM_PROGRAM: "ghostty",
+      TFORMULA_EDGE_MODE: "no-math"
+    } as Record<string, string>;
+    delete environment.TFORMULA_ACTIVE;
+    // A Kitty reply in TFormula's image-id range, as another tool would receive it.
+    const reply = `${ESC}_Gi=1500000000;OK${ST}`;
+    let transcript = "";
+    let answered = false;
+    const terminal = pty.spawn(tsx, ["src/cli.ts", "--no-math", "--", process.execPath, fixture], {
+      name: "xterm-ghostty",
+      cols: 100,
+      rows: 32,
+      cwd: process.cwd(),
+      env: environment
+    });
+    const exited = new Promise<number>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        terminal.kill();
+        reject(new Error("--no-math fixture timed out"));
+      }, 5_000);
+      terminal.onData((data) => {
+        transcript += data;
+        if (!answered && transcript.includes("TFORMULA_EDGE_READY:no-math")) {
+          answered = true;
+          terminal.write(reply);
+        }
+      });
+      terminal.onExit(({ exitCode }) => {
+        clearTimeout(timeout);
+        resolve(exitCode);
+      });
+    });
+
+    await expect(exited).resolves.toBe(0);
+    expect(transcript).not.toContain(`${ESC}[16t`);
+    expect(transcript).not.toContain(`${ESC}_Gi=2000000000`);
+    expect(transcript).toContain(
+      `TFORMULA_UNEXPECTED_CHILD_INPUT:${Buffer.from(reply).toString("hex")}`
+    );
+  }, 6_000);
+
   it("quarantines startup probe replies that arrive after the Agent starts", async () => {
     const tsx = join(process.cwd(), "node_modules", ".bin", "tsx");
     const fixture = join(process.cwd(), "test", "fixtures", "proxy-edge-agent.mjs");

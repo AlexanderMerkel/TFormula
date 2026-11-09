@@ -444,7 +444,12 @@ async function main(): Promise<void> {
     return;
   }
 
-  const probe = probeTerminal(parsed.cellOverride, parsed.mode === "reader" ? 80 : 180);
+  // --no-math is a byte-transparent proxy, so it must not query the terminal.
+  const probe = probeTerminal(
+    parsed.cellOverride,
+    parsed.mode === "reader" ? 80 : 180,
+    parsed.mode === "reader" || parsed.renderMath
+  );
   let exitCode: number;
   if (parsed.mode === "reader") {
     const readerModule = import("./reader.js");
