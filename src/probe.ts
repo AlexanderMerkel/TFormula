@@ -299,9 +299,10 @@ function startupProbeBarrierReceived(parsed: ParsedResponses, requestedKitty: bo
 
 export async function probeTerminal(
   cellOverride?: { width: number; height: number },
-  timeoutMs = 180
+  timeoutMs = 180,
+  queryTerminal = true
 ): Promise<ProbeResult> {
-  const tty = Boolean(process.stdin.isTTY && process.stdout.isTTY);
+  const tty = Boolean(queryTerminal && process.stdin.isTTY && process.stdout.isTTY);
   const fallback: TerminalCapabilities = {
     // Never place APC graphics into a pipe or redirected file merely because
     // TERM_PROGRAM was inherited from a graphical terminal.

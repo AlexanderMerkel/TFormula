@@ -434,6 +434,12 @@ export async function runProxy(
     if (responseTailTimer) clearTimeout(responseTailTimer);
     responseTailTimer = undefined;
     const data = Buffer.isBuffer(chunk) ? inputDecoder.write(chunk) : chunk;
+    // Without the mirror TFormula sends no graphics or runtime probes, so
+    // every byte, including another tool's Kitty replies, is the Agent's.
+    if (!screen) {
+      routeInput(data);
+      return;
+    }
     const filtered = responseFilter.push(data);
     // Preserve stream order for the runtime barrier: every untagged cell/theme
     // response in this chunk must be recorded before its tagged Kitty ACK can
